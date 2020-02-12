@@ -1,7 +1,10 @@
 from socket import *
+import re
 from argparse import ArgumentParser
-import ipaddress
 import time
+
+# should be a packet to send !!!
+packet = bytes("Hello, World!", "utf-8")
 
 # Implementing command line parser to get optional command line arguments
 cmd_parser = ArgumentParser(description= "DNS Client", prog='DnsClient.py')
@@ -17,62 +20,57 @@ args = cmd_parser.parse_args()
 # checking for single query type entry
 if args.mx and args.ns:
     print('Error, invalid arguments! Please only specify a single query to send to the server. \n')
-    exit(0)
+    exit()
+
+if not re.match(r'^@\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}$', args.server):
+	print('Error, Invalid server address! format. Please enter: @8.8.8.8 <domain name>. \n')
+	exit()
 
 # assigning values from command line arguments
-timeout = args.t
-max_entries = args.r
+max_retries = args.r
 server_port = args.p 
-server_ip = ipaddress.ip_address(args.server)
+server_ip = args.server[1:]
 server_name = args.domain
+server_address = (server_ip, server_port)
 
-def receive(sock, num_retries):
-    retry_count = 0
-    message = []
-    initial = time.time()
-    while retry_count < num_retries:
-        if retry_count > num_retries:
-            print("Maximum number of retries reached! \n")
-            break   
-        while ((time.time() - initial) < timeout):
-            packet = sock.recvfrom(4096)
-            if packet == '':
-                print("Socket connection broken! \n")
-                retry_count += 1
-                break
-            message.append(packet)
-        message = "".join(message)
-    
-    time_elapsed = time.time() - initial
-    return message, time_elapsed, retry_count
+#checking request type
+request = 'NS' if args.ns else 'MX' if args.mx else 'A'
 
-print("DnsClient sending request for " + server_name + "\n")
-print("Server: " + server_ip + "\n")
-request = ''
-if args.mx:
-    request = 'MX'
-elif args.ns:
-    request = 'NS'
-else:
-    request = 'A'
-
+# Setting up output 
+print("\nDnsClient sending request for " + server_name + "\n")
+print("Server: " + str(server_ip) + "\n")
 print("Request type: " + request + "\n")
 
-# creating an INet client socket
-my_socket = socket(AF_INET, SOCK_DGRAM)
+my_socket = socket(AF_INET, SOCK_DGRAM)         # creating an INet Client socket
+my_socket.settimeout(args.t)                   # setting timeout value for Client socket
+my_socket.sendto(packet, server_address)
 
-# connecting socket to localhost
-my_socket.connect(('localhost', 5000))
+retry_count = 0
+response = []
+initial = time.time()
 
-# sending/receiving message from server
-server_address = (server_ip, server_port)
-message = input('Enter your message (lowercase): ')
-my_socket.sendto(message.encode(), server_address)
-modified_message, time_passed, retries = receive(my_socket, max_entries)
-output_message = modified_message.decode()
+while response is None or response == []:
+    try:
+        response, server_address = my_socket.recvfrom(1024)
+    except timeout:
+        if retry_count < args.r:
+            print('Error receiving response! Resending ... \n')
+            retry_count += 1 
+            my_socket.sendto(packet, server_address)
+        else:
+            print('Error, maximum number of retries reached! \n')
+            exit()
 
-print("Response received after " + time_passed + " seconds " + "(" + retries + " retries) \n")
+time_elapsed = time.time() - initial
+
+print('Response: ' + response)
+# my_socket.sendto(response.encode(), server_address)
+# modified_response = (my_socket, max_retries)
+# output_response = modified_response.decode()
+
+print("Response received after " + time_elapsed + " seconds " + "(" + retry_count + " retries) \n")
 
 # if request == 'A':
 #     print("IP   ")
-# my_socket.close()
+
+my_socket.close()
