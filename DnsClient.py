@@ -1,6 +1,7 @@
 from socket import *
 import array
 import struct
+import sys
 import re
 from argparse import ArgumentParser
 import time
@@ -22,6 +23,30 @@ class UDPPacket:
         self.dst_port = dst_port
         self.data = data
         self.flags = flags
+
+
+    def find_port(self):
+        try:
+            for port in range(5005,5050):
+                source_address = ('127.0.0.1', port)
+                self.src_port = port
+                result = my_socket.connect_ex(source_address)
+                if result == 0:
+                    source_address = ('127.0.0.1', port)
+                    print ("Source Port picked: " + str(port) + " \n")
+                    my_socket.close()
+                    break
+        except KeyboardInterrupt:
+            sys.exit()
+
+        except gaierror:
+            print('ERROR    Hostname could not be resolved. Exiting process \n')
+            sys.exit()
+
+        except error:
+            print("ERROR    Couldn't connect to server. \n")
+            sys.exit()
+        return port
 
     # Encode the fields into a long bytes sequence
     def build(self) -> bytes:
@@ -49,7 +74,7 @@ class UDPPacket:
 
         cheksm = checksum(pseudo_hdr + packet)
 
-        packet = packet[:4] + struct.pack('B', length) + struct.pack('H', cheksm) + packet[8:]
+        packet = struct.pack('H', find_port()) + packet[2:4] + struct.pack('B', length) + struct.pack('H', cheksm) + packet[8:]
 
         return packet
 
@@ -62,10 +87,12 @@ def checksum(packet: bytes) -> int:
     res += res >> 16
 
     return (~res) & 0xffff
+
+
 # should be a packet to send !!!
 packet = UDPPacket(
-    '192.168.1.42',
-    20,
+    '127.0.0.1',
+    0,
     '192.168.1.1',
     666,
     "Swaroop",
@@ -97,8 +124,6 @@ server_port = args.p
 server_ip = args.server[1:]
 server_name = args.domain
 
-source_address = ('127.0.0.1', 5003)
-
 #checking request type
 request = 'NS' if args.ns else 'MX' if args.mx else 'A'
 
@@ -111,12 +136,15 @@ print("Request type: " + request + "\n")
 my_socket = socket(AF_INET, SOCK_DGRAM)         # creating an INet Client socket
 my_socket.settimeout(args.t)                   # setting timeout value for Client socket
 
-# sending packet from source to DNS server
-my_socket.sendto(packet, source_address)
-
 retry_count = 0
 response = []
 initial = time.time()
+
+source_address = ()
+
+# initializing UDP socket with timeout value
+my_socket = socket(AF_INET, SOCK_DGRAM)         # creating an INet Client socket
+my_socket.settimeout(args.t)                   # setting timeout value for Client socket
 
 # Loop accounts for timeout and selected number of retries
 while response is None or response == []:
@@ -125,7 +153,7 @@ while response is None or response == []:
     except timeout:
         if retry_count < args.r:
             print('ERROR    Not receiving response. Resending \n')
-            retry_count += 1 
+            retry_count += 1
             my_socket.sendto(packet, source_address)
         else:
             print('ERROR    Maximum number of retries reached! \n')
@@ -133,7 +161,7 @@ while response is None or response == []:
 
 time_elapsed = time.time() - initial            # calculating duration of packet sending process, including retries if it applies
 
-print('Response (decoding partially done): ' + response.decode('utf8', 'ignore') + ' \n')
+print('Response (decoding partially done): ' + response[0].decode('utf8') + ' \n')
 print("Response received after " + str(time_elapsed) + " seconds " + "(" + str(retry_count) + " retries) \n")
 
 my_socket.close()
