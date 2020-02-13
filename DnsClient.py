@@ -1,10 +1,75 @@
 from socket import *
+import array
+import struct
 import re
 from argparse import ArgumentParser
 import time
 
+class UDPPacket:
+
+    # This constructor will hold all the needed packet fields
+    def __init__(self,
+                 src_host:  str,
+                 src_port:  int,
+                 dst_host:  str,
+                 dst_port:  int,
+                 data: str,
+                 flags:     int = 0
+                 ):
+        self.src_host = src_host
+        self.src_port = src_port
+        self.dst_host = dst_host
+        self.dst_port = dst_port
+        self.data = data
+        self.flags = flags
+
+    # Encode the fields into a long bytes sequence
+    def build(self) -> bytes:
+
+        # https://www.techrepublic.com/article/exploring-the-anatomy-of-a-data-packet/
+
+        packet = struct.pack(
+            '!HHBH',        # format of the struct, each letter indicates format of an element
+                            # i.e. src_port is H (unsigned short), length is B (unsigned char)
+            self.src_port,  # Source Port (2 bytes)
+            self.dst_port,  # Destination Port (2 bytes)
+            0,              # Length (2 bytes)
+            0,              # Checksum (initial value) (2 bytes)
+        )
+
+        pseudo_hdr = struct.pack(
+            '!4s4sHH',
+            inet_aton(self.src_host),    # Source Address
+            inet_aton(self.dst_host),    # Destination Address
+            IPPROTO_UDP,                 # PTCL
+            len(packet)                         # UDP Length (Should also include length of message though)
+        )
+
+        length = len(pseudo_hdr) + len(self.data)
+
+        cheksm = checksum(pseudo_hdr + packet)
+
+        packet = packet[:4] + struct.pack('B', length) + struct.pack('H', cheksm) + packet[8:]
+
+        return packet
+
+def checksum(packet: bytes) -> int:
+    if len(packet) % 2 != 0:
+        packet += b'\0'
+
+    res = sum(array.array("H", packet))
+    res = (res >> 16) + (res & 0xffff)
+    res += res >> 16
+
+    return (~res) & 0xffff
 # should be a packet to send !!!
-packet = bytes("Hello, World!", "utf-8")
+packet = UDPPacket(
+    '192.168.1.42',
+    20,
+    '192.168.1.1',
+    666,
+    "Swaroop",
+    0b000101001).build()
 
 # Implementing command line parser to get optional command line arguments
 cmd_parser = ArgumentParser(description= "DNS Client", prog='DnsClient.py')
@@ -19,11 +84,11 @@ args = cmd_parser.parse_args()
 
 # checking for single query type entry
 if args.mx and args.ns:
-    print('Error, invalid arguments! Please only specify a single query to send to the server. \n')
+    print('ERROR    Invalid arguments! Please specify a single query to send to the server. \n')
     exit()
 
 if not re.match(r'^@\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}$', args.server):
-	print('Error, Invalid server address! format. Please enter: @8.8.8.8 <domain name>. \n')
+	print('ERROR    Invalid server address format! Please enter: @8.8.8.8 <domain name>. \n')
 	exit()
 
 # assigning values from command line arguments
@@ -31,7 +96,8 @@ max_retries = args.r
 server_port = args.p 
 server_ip = args.server[1:]
 server_name = args.domain
-server_address = (server_ip, server_port)
+
+source_address = ('127.0.0.1', 5003)
 
 #checking request type
 request = 'NS' if args.ns else 'MX' if args.mx else 'A'
@@ -41,36 +107,33 @@ print("\nDnsClient sending request for " + server_name + "\n")
 print("Server: " + str(server_ip) + "\n")
 print("Request type: " + request + "\n")
 
+# initializing UDP socket with timeout value
 my_socket = socket(AF_INET, SOCK_DGRAM)         # creating an INet Client socket
 my_socket.settimeout(args.t)                   # setting timeout value for Client socket
-my_socket.sendto(packet, server_address)
+
+# sending packet from source to DNS server
+my_socket.sendto(packet, source_address)
 
 retry_count = 0
 response = []
 initial = time.time()
 
+# Loop accounts for timeout and selected number of retries
 while response is None or response == []:
     try:
         response, server_address = my_socket.recvfrom(1024)
     except timeout:
         if retry_count < args.r:
-            print('Error receiving response! Resending ... \n')
+            print('ERROR    Not receiving response. Resending \n')
             retry_count += 1 
-            my_socket.sendto(packet, server_address)
+            my_socket.sendto(packet, source_address)
         else:
-            print('Error, maximum number of retries reached! \n')
+            print('ERROR    Maximum number of retries reached! \n')
             exit()
 
-time_elapsed = time.time() - initial
+time_elapsed = time.time() - initial            # calculating duration of packet sending process, including retries if it applies
 
-print('Response: ' + response)
-# my_socket.sendto(response.encode(), server_address)
-# modified_response = (my_socket, max_retries)
-# output_response = modified_response.decode()
-
-print("Response received after " + time_elapsed + " seconds " + "(" + retry_count + " retries) \n")
-
-# if request == 'A':
-#     print("IP   ")
+print('Response (decoding partially done): ' + response.decode('utf8', 'ignore') + ' \n')
+print("Response received after " + str(time_elapsed) + " seconds " + "(" + str(retry_count) + " retries) \n")
 
 my_socket.close()
