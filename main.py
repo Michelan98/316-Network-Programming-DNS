@@ -1,9 +1,19 @@
-import argparse
 from socket import *
 import struct
 import sys
 import re
 import array
+import time
+from argparse import ArgumentParser
+
+
+def formName(names):
+	formatName = []
+	for n in names:
+		formatName.append(len(n))
+		for c in n:
+			formatName.append(ord(c))
+	return formatName
 
 
 def parseName(b):
@@ -25,30 +35,6 @@ def checksum(packet: bytes) -> int:
     res += res >> 16
 
     return (~res) & 0xffff
-
-
-def find_port(my_socket):
-        try:
-            for port in range(5005,5050):
-                source_address = ('127.0.0.1', port)
-                result = my_socket.connect_ex(source_address)
-                if result == 0:
-                    source_address = ('127.0.0.1', port)
-                    print ("Source Port picked: " + str(port) + " \n")
-                    my_socket.close()
-                    break
-        except KeyboardInterrupt:
-            sys.exit()
-
-        except gaierror:
-            print('ERROR    Hostname could not be resolved. Exiting process \n')
-            sys.exit()
-
-        except error:
-            print("ERROR    Couldn't connect to server. \n")
-            sys.exit()
-        return port
-
 
 class UDPPacket:
     def __init__(self,
@@ -78,47 +64,27 @@ class UDPPacket:
             inet_aton(self.src_host),    # Source Address
             inet_aton(self.dst_host),    # Destination Address
             IPPROTO_UDP,                 # PTCL
-            len(packet)                         # UDP Length (Should also include length of message though)
+            len(packet)                  # UDP Length (Should also include length of message though)
         )
 
         length = len(pseudo_hdr)
-
-        cheksm = checksum(pseudo_hdr + packet)
+        cheksm = checksum(pseudo_hdr)
 
         packet = packet[0:4] + struct.pack('B', length) + struct.pack('H', cheksm) + packet[8:]
-
         return packet
 
-class Packet(object):
-    def __init__(self, name, type):
-        self.name = bytes(self.formName(name.split('.')))
-        self.type = bytes([self.typeTransform(type)])
+# Implementing command line parser to get optional command line arguments
 
-    def formName(self, names):
-        formatName = []
-        for n in names:
-            formatName.append(len(n))
-            for c in n:
-                formatName.append(ord(c))
-        return formatName
+cmd_parser = ArgumentParser(description= "DNS Client", prog='DnsClient.py')
 
-    def typeTransform(self, type):
-        typemap = {'A': 1, 'NS': 2, 'MX': 15}
-        return typemap[type]
-
-    def generateData(self):
-        return b'\x82\x7a\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00' + self.name + b'\x00\x00' + self.type + b'\x00\x01'
-
-
-parser = argparse.ArgumentParser(description='DNS client')
-parser.add_argument('-t', type=int, default=5, help='time out of retransmit')
-parser.add_argument('-r', type=int, default=3, help='max-retries')
-parser.add_argument('-p', type=int, default=53, help='UDP port number of the DNS server')
-parser.add_argument('-mx', action='store_true', help='send a mail server query')
-parser.add_argument('-ns', action='store_true', help='send a name server query')
-parser.add_argument('server')
-parser.add_argument('name')
-args = parser.parse_args()
+cmd_parser.add_argument("-t", type=int, required=False, default=5, help='timeout (in seconds) for retransmitting')
+cmd_parser.add_argument("-r", type=int, required=False, default=3, help='maximum number of retransmissions')
+cmd_parser.add_argument("-p", type=int, required=False, default=53, help='port # of DNS server')
+cmd_parser.add_argument("-mx", action='store_true', required=False, help='pick a single type of server query')
+cmd_parser.add_argument("-ns", action='store_true', required=False, help='pick a single type of server query')
+cmd_parser.add_argument("server", type=str, help='server IP Address')
+cmd_parser.add_argument("domain", type=str, help='domain name to query')
+args = cmd_parser.parse_args()
 
 if args.mx and args.ns:
     print('ERROR    invalid argument:could send mail server and name server at the same time')
@@ -128,50 +94,71 @@ if not re.match(r'^@\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}$', args.server):
     print('ERROR	invalid argument:format of server address is wrong')
     exit()
 
+# assigning values from command line arguments
+max_retries = args.r
+server_port = args.p
+server_ip = args.server[1:]
+server_name = args.domain
+
 type = 'NS' if args.ns else 'MX' if args.mx else 'A'
+type_dict_query = {'A':1,'NS':2,'MX':15, 'CNAME': 5}
+
+
+type_dict_response = {1: 'A', 2: 'NS', 15: 'MX', 5: 'CNAME'}
+
 # packet = Packet(args.name, type)
 # data = packet.generateData()
 
-print('DNS sending request for:', args.name)
-print('Server:', args.server[1:])
-print('Request type:', type)
+# Setting up output
+print("\nDnsClient sending request for " + server_name + "\n")
+print("Server: " + str(server_ip) + "\n")
+print("Request type: " + type + "\n")
 
+# initializing UDP socket with timeout value
+my_socket = socket(AF_INET, SOCK_DGRAM)         # creating an INet Client socket
+my_socket.settimeout(args.t)                   # setting timeout value for Client socket
 
-s = socket(AF_INET, SOCK_DGRAM)
-packet = UDPPacket('127.0.0.1', 53, args.server[1:], args.p)
+retry_count = 0
+response = []
+initial = time.time()
+
+packet = UDPPacket('127.0.0.1', 5355, args.server[1:], args.p)
 data = packet.build()
-s.settimeout(args.t)
-
-pack = Packet(args.name,type)
-s.sendto(b'\x82\x7a\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00'+pack.name+b'\x00\x00'+pack.type+b'\x00\x01', (args.server[1:], args.p))
-response = b''
-serverAddr = ()
-numOfTries = 0
-
-while response == b'' or response is None:
+r = my_socket.sendto(b'\x82\x7a\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00'+bytes(formName(server_name.split('.')))+b'\x00\x00'+bytes(type_dict_query[type])+b'\x00\x01', (packet.dst_host, packet.dst_port))
+# Loop accounts for timeout and selected number of retries
+while response is None or response == []:
     try:
-        response, serverAddr = s.recvfrom(1024)
-    except socket.timeout as e:
-        if numOfTries < args.t:
-            print('not receiving,resend the message')
-            s.sendto(data, (args.server[1:], args.p))
-            numOfTries = numOfTries + 1
+        response, server_address = my_socket.recvfrom(2048)
+    except timeout:
+        if retry_count < args.r:
+            print('ERROR    Not receiving response. Resending \n')
+            retry_count += 1
+            my_socket.sendto("hiantonio".encode(), (packet.dst_host, packet.dst_port))
         else:
-            print('ERROR	message transfer:the number of resend the message has been used up')
+            print('ERROR    Maximum number of retries reached! \n')
             exit()
 
 print(response)
 
+time_elapsed = time.time() - initial            # calculating duration of packet sending process, including retries if it applies
+
+print("Response received after " + str(time_elapsed) + " seconds " + "(" + str(retry_count) + " retries) \n")
+
+# s.sendto(data, (packet.dst_host, packet.dst_port))
+
+
 identification = int.from_bytes(response[0:1], "big")  # 2 bytes
 
+print(identification)
 control = int.from_bytes(response[2:3], "big")  # 2 bytes
+print(control)
 
 # |QR| Opcode |AA|TC|RD|RA| Z | RCODE
 control_str = format(control, "b") # for debugging purposes
 
-# AA (bit 11 from the right) is the only one we're interested in
+# AA (bit 10 from the right) is the only one we're interested in
 # Indicates whether (1) or not (0) the name server is an authority for a domain name in the question section
-auth = 'auth' if control & 11 else 'non-auth'
+auth = 'auth' if control & 10 else 'non-auth'   # test
 
 question_count = int.from_bytes(response[4:5], "big")  # 2 bytes
 answer_count = int.from_bytes(response[6:7], "big")  # 2 bytes
@@ -184,8 +171,6 @@ question_types = []
 question_classes = []
 offset = 11
 
-print(response[12])
-type_dict = {1: 'A', 2: 'NS', 15: 'MX', 5: 'CNAME'}
 
 # A DNS question has the format
 
@@ -214,7 +199,7 @@ for i in range(question_count):
         offset = offset + 2
 
     question_names[i] = domain_name[:-1]  # removing the last dot
-    question_types[i] = type_dict[response[offset+3:offset+4]]
+    question_types[i] = type_dict_response[response[offset+3:offset+4]]
     question_classes[i] = response[offset+5:offset+6]
     offset = offset + 6
 
@@ -240,7 +225,7 @@ for i in range(answer_count):
         offset = offset + 2
 
     answer_names[i] = domain_name  # variable length
-    answer_types[i] = type_dict[int.from_bytes(response[offset+3:offset+4], "big")]
+    answer_types[i] = type_dict_response[int.from_bytes(response[offset+3:offset+4], "big")]
     answer_classes[i] = response[offset+5:offset+6]
 
     TTLs[i] = int.from_bytes(response[offset+7:offset+10], "big") # 32 bits
