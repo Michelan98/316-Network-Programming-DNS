@@ -223,7 +223,28 @@ for i in range(question_count):
     print(offset)
     print(response[offset:offset+1])
 
-# Now the Answers Section
+# Now the Answers Section, has the following format
+
+# 1
+# 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16
+# +--+--+--+--+--+--+--+--+--+--+--+--+--+
+# | |
+# / /
+# /                 NAME /
+# | |
+# +--+--+--+--+--+--+--+--+--+--+--+--+--+
+# | TYPE |
+# +--+--+--+--+--+--+--+--+--+--+--+--+--+
+# | CLASS |
+# +--+--+--+--+--+--+--+--+--+--+--+--+--+
+# | TTL |
+# | |
+# +--+--+--+--+--+--+--+--+--+--+--+--+--+
+# | RDLENGTH |
+# +--+--+--+--+--+--+--+--+--+--+--+--+--+
+# / RDATA /
+# /                                        /
+# +--+--+--+--+--+--+--+--+--+--+--+--+--+
 answer_names = []
 answer_types = []
 answer_classes = []
@@ -257,16 +278,42 @@ for i in range(answer_count):
     TTLs.append(TTL) # 32 bits
 
     RDLENGTH = int.from_bytes(response[offset+8:offset+10], "big")
-    print(RDLENGTH)
+    print('RD Length', RDLENGTH)
     RDLENGTHs.append(RDLENGTH)  # 16 bits
 
     offset = offset + 10
-    IP_Address = ''
-    for i in range(RDLENGTH):
-        IP_Address = IP_Address + str(response[offset+i]) + "."
 
-    IP_Address = IP_Address[:-1]
-    print(IP_Address)
-    RDATAs.append(IP_Address) # 16 bits
+    # If type is 'A', then RDATA is the IP address (four octets)
+    if type == 'A':
+        IP_Address = ''
+        for i in range(RDLENGTH):
+            IP_Address = IP_Address + str(response[offset+i]) + "."
 
-    
+        IP_Address = IP_Address[:-1]
+        print(IP_Address)
+        RDATAs.append(IP_Address) # 16 bits
+
+    # If type is 'NS', then RDATA is the name of the server specified using the same format as the QNAME field
+
+    # if type is 'MX', then RDATA has the format
+
+    # +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+    # |                 PREFERENCE                     |
+    # +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+    # /                  EXCHANGE                      /
+    # /                                                /
+    # +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+    elif (type == 'NS') | (type == 'MX') | (type == 'CNAME'):
+        if type == 'MX':
+            preference = response[offset:offset + 2]
+            offset = offset + 2
+        name = ''
+        # while response[offset] != 0:
+        #     label_length = response[offset]
+        #     print("Label length", label_length)
+        #     name = domain_name + parseName(response[offset + 1:offset + 1 + label_length])
+        #     offset = offset + label_length + 1
+
+        print(name)
+        RDATAs.append(name)
