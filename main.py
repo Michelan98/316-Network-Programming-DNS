@@ -101,8 +101,8 @@ server_ip = args.server[1:]
 server_name = args.domain
 
 type = 'NS' if args.ns else 'MX' if args.mx else 'A'
-type_dict_query = {'A':1,'NS':2,'MX':15, 'CNAME': 5}
-
+type_dict_query = {'A': 1,'NS':2,'MX':15, 'CNAME': 5}
+print(bytes(type_dict_query[type]))
 
 type_dict_response = {1: 'A', 2: 'NS', 15: 'MX', 5: 'CNAME'}
 
@@ -124,7 +124,15 @@ initial = time.time()
 
 packet = UDPPacket('127.0.0.1', 5355, args.server[1:], args.p)
 data = packet.build()
-r = my_socket.sendto(b'\x82\x7a\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00'+bytes(formName(server_name.split('.')))+b'\x00\x00'+bytes(type_dict_query[type])+b'\x00\x01', (packet.dst_host, packet.dst_port))
+
+print(int.to_bytes(1, 2, "big"))
+r = my_socket.sendto(b'\x82\x7a\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00'+
+                     bytes(formName(server_name.split('.'))) +
+                     b'\x00' +
+                     int.to_bytes(type_dict_query[type], 2, "big") +
+                     b'\x00\x01',
+                     (packet.dst_host, packet.dst_port))
+
 # Loop accounts for timeout and selected number of retries
 while response is None or response == []:
     try:
@@ -138,39 +146,43 @@ while response is None or response == []:
             print('ERROR    Maximum number of retries reached! \n')
             exit()
 
-print(response)
+print (response)
 
 time_elapsed = time.time() - initial            # calculating duration of packet sending process, including retries if it applies
 
 print("Response received after " + str(time_elapsed) + " seconds " + "(" + str(retry_count) + " retries) \n")
 
-# s.sendto(data, (packet.dst_host, packet.dst_port))
 
+identification = int.from_bytes(response[0:2], "big")  # 2 bytes
+print("Identification", identification)
 
-identification = int.from_bytes(response[0:1], "big")  # 2 bytes
-
-print(identification)
-control = int.from_bytes(response[2:3], "big")  # 2 bytes
-print(control)
+control = int.from_bytes(response[2:4], "big")  # 2 bytes
 
 # |QR| Opcode |AA|TC|RD|RA| Z | RCODE
 control_str = format(control, "b") # for debugging purposes
+print("Control", control_str)
 
 # AA (bit 10 from the right) is the only one we're interested in
 # Indicates whether (1) or not (0) the name server is an authority for a domain name in the question section
-auth = 'auth' if control & 10 else 'non-auth'   # test
+auth = 'auth' if control & 2**10 else 'non-auth'   # test
 
-question_count = int.from_bytes(response[4:5], "big")  # 2 bytes
-answer_count = int.from_bytes(response[6:7], "big")  # 2 bytes
-authority_count = int.from_bytes(response[8:9], "big")  # 2 bytes
-additional_count = int.from_bytes(response[10:11], "big") # 2 bytes
+question_count = int.from_bytes(response[4:6], "big")  # 2 bytes
+print("Question Count", question_count)
+
+answer_count = int.from_bytes(response[6:8], "big")  # 2 bytes
+print("Answer Count", answer_count)
+
+authority_count = int.from_bytes(response[8:10], "big")  # 2 bytes
+print("Authority Count", authority_count)
+
+additional_count = int.from_bytes(response[10:12], "big") # 2 bytes
+print("Additional Count", additional_count)
 
 # Now the Question Section
 question_names = []
 question_types = []
 question_classes = []
-offset = 11
-
+offset = 12
 
 # A DNS question has the format
 
@@ -186,23 +198,30 @@ offset = 11
 # +--+--+--+--+--+--+--+--+--+--+--+--+--
 
 for i in range(question_count):
-
     # The domain name is broken into discrete labels which are concatenated;
     # each label is prefixed by the length of that label.
     domain_name = ''
-
     # The domain name terminates with the zero length octet for the null label of the root
-    while response[offset+1] != b'0x00':
+    # while response[offset+1] != b'\x00':
+    while response[offset] != 0:
+        label_length = response[offset]
+        print(label_length)
+        domain_name = domain_name + parseName(response[offset+1:offset+1+label_length]) + "."
+        offset = offset + label_length + 1
 
-        label_length = int.from_bytes(response[offset+1], "big")
-        domain_name = domain_name + parseName(response[offset+2:offset+2+label_length]) + "."
-        offset = offset + 2
+    question_names.append(domain_name[:-1])  # removing the last dot
+    print(domain_name)
 
-    question_names[i] = domain_name[:-1]  # removing the last dot
-    question_types[i] = type_dict_response[response[offset+3:offset+4]]
-    question_classes[i] = response[offset+5:offset+6]
-    offset = offset + 6
+    offset = offset + 1  # skipping null character that indicates end of domain name
+    question_type = int.from_bytes(response[offset:offset+2], "big")
+    print(question_type)
+    question_types.append(question_type)
 
+    question_classes.append(response[offset+2:offset+4])
+    offset = offset + 4
+    print(offset)
+    print(response[offset:offset+1])
+    exit()
 # Now the Answers Section
 answer_names = []
 answer_types = []
@@ -218,17 +237,17 @@ for i in range(answer_count):
     domain_name = ''
 
     # The domain name terminates with the zero length octet for the null label of the root
-    while response[offset+1] != b'0x00':
+    for j in range(3):
+        label_length = response[offset]
+        print(label_length)
+        domain_name = domain_name + parseName(response[offset+1:offset+1+label_length]) + "."
+        offset = offset + label_length + 1
 
-        label_length = int.from_bytes(response[offset+1], "big")
-        domain_name = domain_name + parseName(response[offset+2:offset+2+label_length])
-        offset = offset + 2
+    answer_names.append(domain_name[:-1])  # variable length
+    answer_types.append(type_dict_response[int.from_bytes(response[offset+3:offset+4], "big")])
+    answer_classes.append(response[offset+5:offset+6])
 
-    answer_names[i] = domain_name  # variable length
-    answer_types[i] = type_dict_response[int.from_bytes(response[offset+3:offset+4], "big")]
-    answer_classes[i] = response[offset+5:offset+6]
-
-    TTLs[i] = int.from_bytes(response[offset+7:offset+10], "big") # 32 bits
-    RDLENGTHs[i] = int.from_bytes(response[offset+11:offset+12], "big")  # 16 bits
-    RDATAs[i] = response[offset+13:offset+14] # 16 bits
+    TTLs.append(int.from_bytes(response[offset+7:offset+10], "big")) # 32 bits
+    RDLENGTHs.append(int.from_bytes(response[offset+11:offset+12], "big"))  # 16 bits
+    RDATAs.append(response[offset+13:offset+14]) # 16 bits
     offset = offset + 14
