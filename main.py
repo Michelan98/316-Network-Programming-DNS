@@ -209,7 +209,8 @@ for i in range(question_count):
         domain_name = domain_name + parseName(response[offset+1:offset+1+label_length]) + "."
         offset = offset + label_length + 1
 
-    question_names.append(domain_name[:-1])  # removing the last dot
+    domain_name = domain_name[:-1]
+    question_names.append(domain_name)  # removing the last dot
     print(domain_name)
 
     offset = offset + 1  # skipping null character that indicates end of domain name
@@ -221,7 +222,7 @@ for i in range(question_count):
     offset = offset + 4
     print(offset)
     print(response[offset:offset+1])
-    exit()
+
 # Now the Answers Section
 answer_names = []
 answer_types = []
@@ -235,19 +236,37 @@ for i in range(answer_count):
     # The domain name is broken into discrete labels which are concatenated;
     # each label is prefixed by the length of that label.
     domain_name = ''
-
+    print (response[offset])
     # The domain name terminates with the zero length octet for the null label of the root
-    for j in range(3):
-        label_length = response[offset]
-        print(label_length)
-        domain_name = domain_name + parseName(response[offset+1:offset+1+label_length]) + "."
-        offset = offset + label_length + 1
+    while response[offset] != 0:
+        # Answer Name (skipping for now)
+        offset = offset + 1
 
+    # offset = offset + 1 # skipping null character
+    print(response[offset])
     answer_names.append(domain_name[:-1])  # variable length
-    answer_types.append(type_dict_response[int.from_bytes(response[offset+3:offset+4], "big")])
-    answer_classes.append(response[offset+5:offset+6])
 
-    TTLs.append(int.from_bytes(response[offset+7:offset+10], "big")) # 32 bits
-    RDLENGTHs.append(int.from_bytes(response[offset+11:offset+12], "big"))  # 16 bits
-    RDATAs.append(response[offset+13:offset+14]) # 16 bits
-    offset = offset + 14
+    answer_type = int.from_bytes(response[offset:offset+2], "big")
+    print(answer_type)
+    answer_types.append(type_dict_response[answer_type])
+    answer_classes.append(response[offset+2:offset+4])
+
+    print(response[offset+4:offset+8])
+    TTL = int.from_bytes(response[offset+4:offset+8], "big")
+    print(TTL)
+    TTLs.append(TTL) # 32 bits
+
+    RDLENGTH = int.from_bytes(response[offset+8:offset+10], "big")
+    print(RDLENGTH)
+    RDLENGTHs.append(RDLENGTH)  # 16 bits
+
+    offset = offset + 10
+    IP_Address = ''
+    for i in range(RDLENGTH):
+        IP_Address = IP_Address + str(response[offset+i]) + "."
+
+    IP_Address = IP_Address[:-1]
+    print(IP_Address)
+    RDATAs.append(IP_Address) # 16 bits
+
+    
