@@ -305,15 +305,13 @@ for i in range(answer_count):
     # +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
 
     elif (type == 'NS') | (type == 'MX') | (type == 'CNAME'):
+
         if type == 'MX':
             preference = response[offset:offset + 2]
             offset = offset + 2
-        name = ''
-        # while response[offset] != 0:
-        #     label_length = response[offset]
-        #     print("Label length", label_length)
-        #     name = domain_name + parseName(response[offset + 1:offset + 1 + label_length])
-        #     offset = offset + label_length + 1
 
+        name = domain_name + parseName(response[offset + 1:offset + 1 + RDLENGTH])
         print(name)
         RDATAs.append(name)
+
+
