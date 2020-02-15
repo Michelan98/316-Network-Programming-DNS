@@ -314,4 +314,5 @@ for i in range(answer_count):
         print(name)
         RDATAs.append(name)
 
+print(RDATAs)
 
